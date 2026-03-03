@@ -9,7 +9,15 @@ def scaled_dot_product_attention_simple(
     scale: float | None = None,
     mask: mx.array | None = None,
 ) -> mx.array:
-    pass
+    if scale is None:
+        scale = 1.0 * mx.rsqrt(query.shape[-1])
+    
+    key_transpose = mx.swapaxes(key, -2, -1)
+    scores = mx.matmul(query, key_transpose) * scale
+    if mask is not None:
+        scores += mask
+    attention_weights = mx.softmax(scores, axis=-1)
+    return mx.matmul(attention_weights, value)
 
 
 class SimpleMultiHeadAttention:
