@@ -80,7 +80,9 @@ class SimpleMultiHeadAttention:
 
 
 def causal_mask(L: int, S: int, dtype: mx.Dtype) -> mx.array:
-    pass
+    mask = mx.tril(mx.ones((L, S)), k = (S - L))
+    mask = mx.where(mask, mx.array(0), mx.array(-mx.inf)).astype(dtype)
+    return mask
 
 
 def scaled_dot_product_attention_grouped(
@@ -90,7 +92,33 @@ def scaled_dot_product_attention_grouped(
     scale: float | None = None,
     mask: mx.array | str | None = None,
 ) -> mx.array:
-    pass
+    factor = mx.rsqrt(query.shape[-1]) if scale is None else mx.array(scale)
+    factor = factor.astype(query.dtype)
+    expect_shape = query.shape
+
+    H_q, L, D = query.shape[-3 : ]
+    H, S, D = key.shape[-3 : ]
+    B = query.shape[ : -3]
+    assert H_q % H == 0, f"GQA group can not be divided, query {H_q}, key {H}"
+    n_repeats = H_q // H
+
+    query = query.reshape(*B, -1, H, n_repeats, L, D)
+    key = key.reshape(*B, -1, H, 1, S, D)
+    value = value.reshape(*B, -1, H, 1, S, D)
+
+    key_transpose = mx.swapaxes(key, -2, -1)
+    scores = mx.matmul(query, key_transpose) * factor
+    if mask is not None:
+        if mask == 'causal':
+            mask = causal_mask(L, S, scores.dtype)
+            scores = scores + mask
+        else:
+            mask = mx.broadcast_to(mask, (*B, H_q, L, S))
+            mask = mask.reshape(*B, 1, H, n_repeats, L, S)
+            scores = scores + mask
+    
+    result = mx.matmul(mx.softmax(scores, axis=-1), value)
+    return result.reshape(expect_shape)
 
 
 def flash_attention(
